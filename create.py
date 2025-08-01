@@ -1,0 +1,204 @@
+from core.dblite import DBlite, gW
+from core.tsv import iter_tuples
+import logging
+from core.filemanager import FM
+from core.config_log import config_log
+from core.imdb import IMDB
+from core.wiki import WIKI
+from os import environ
+
+config_log("log/build_db.log")
+
+logger = logging.getLogger(__name__)
+
+
+def isOkTitle(isOriginalTitle: bool, language: str, region: str, *args):
+    if isOriginalTitle:
+        return True
+    if language is not None:
+        return language in ('es', 'en')
+    return region == 'ES'
+
+
+def main():
+    MAIN_MOVIES = set(IMDB.scrape(*environ.get('SCRAPE_URLS', '').split()))
+    MISS_MOVIES = set(MAIN_MOVIES)
+    logger.info(f"{len(MAIN_MOVIES)} MAIN_MOVIES")
+
+    DB = DBlite("imdb.sqlite", reload=True)
+
+    DB.executescript(FM.load("sql/schema.sql"))
+
+    for row in iter_tuples(
+        'https://datasets.imdbws.com/title.basics.tsv.gz',
+        'tconst',
+        'titleType',
+        'startYear',
+        'runtimeMinutes',
+        'primaryTitle',
+        'originalTitle'
+    ):
+        if row[1] in ('videoGame', ):
+            continue
+        MISS_MOVIES.discard(row[0])
+        DB.executemany(
+            "INSERT INTO MOVIE (id, type, year, duration) VALUES (?, ?, ?, ?)",
+            row[:4]
+        )
+        for v in row[-2:]:
+            if v is not None:
+                DB.executemany(
+                    "INSERT OR IGNORE INTO TITLE (movie, title) VALUES (?, ?)",
+                    (row[0], v)
+                )
+    if len(MISS_MOVIES):
+        logger.debug(f"{len(MISS_MOVIES)} películas necesitan recuperarse a mano")
+        for v in map(IMDB.get, sorted(MISS_MOVIES)):
+            if not v:
+                continue
+            MISS_MOVIES.discard(v.id)
+            DB.executemany(
+                "INSERT INTO MOVIE (id, type, year, duration, votes, rating) VALUES (?, ?, ?, ?, ?, ?)",
+                (v.id, v.typ, v.year, v.duration, v.votes, v.rating)
+            )
+            if v.title:
+                DB.executemany(
+                    "INSERT OR IGNORE INTO TITLE (movie, title) VALUES (?, ?)",
+                    (v.id, v.title)
+                )
+    DB.flush()
+    if len(MISS_MOVIES):
+        logger.warning(f"{len(MISS_MOVIES)} películas no se han podido recuperar")
+
+    MAIN_MOVIES = tuple(sorted(MAIN_MOVIES.difference(MISS_MOVIES)))
+
+    for row in iter_tuples(
+        'https://datasets.imdbws.com/title.akas.tsv.gz',
+        'titleId',
+        'title',
+        'isOriginalTitle',
+        'language',
+        'region',
+    ):
+        if not isOkTitle(*row[2:]):
+            continue
+        DB.executemany(
+            "INSERT OR IGNORE INTO TITLE (movie, title) VALUES (?, ?)",
+            row[:2]
+        )
+    DB.flush()
+
+    for row in iter_tuples(
+        "https://datasets.imdbws.com/title.ratings.tsv.gz",
+        'averageRating',
+        'numVotes',
+        'tconst',
+    ):
+        if row[1:] == (0, 0):
+            continue
+        DB.executemany(
+            "UPDATE MOVIE SET rating = ?, votes = ? where id = ?",
+            row
+        )
+    DB.flush()
+    if MAIN_MOVIES:
+        for v in map(
+            IMDB.get,
+            DB.to_tuple(f"select id from MOVIE where votes = 0 and id {gW(MAIN_MOVIES)}", *MAIN_MOVIES)
+        ):
+            if v and v.votes > 0 and v.rating > 0:
+                DB.executemany(
+                    "UPDATE MOVIE SET rating = ?, votes = ? where id = ?",
+                    (v.rating, v.votes, v.id)
+                )
+    DB.flush()
+
+    for tconst, directors, writers in iter_tuples(
+        "https://datasets.imdbws.com/title.crew.tsv.gz",
+        'tconst',
+        'directors',
+        'writers'
+    ):
+        for d in directors:
+            DB.executemany(
+                "INSERT OR IGNORE INTO WORKER (movie, person, category) VALUES (?, ?, ?)",
+                (tconst, d, 'director')
+            )
+        for w in writers:
+            DB.executemany(
+                "INSERT OR IGNORE INTO WORKER (movie, person, category) VALUES (?, ?, ?)",
+                (tconst, w, 'writer')
+            )
+    DB.flush()
+    for tconst, nconst, category, ordering in iter_tuples(
+        "https://datasets.imdbws.com/title.principals.tsv.gz",
+        'tconst',
+        'nconst',
+        'category',
+        'ordering',
+    ):
+        if ordering > 10 or category not in ('director', 'writer', 'actor', 'actress'):
+            continue
+        DB.executemany(
+            "INSERT OR IGNORE INTO WORKER (movie, person, category) VALUES (?, ?, ?)",
+            (tconst, nconst, category)
+        )
+    DB.flush()
+    DB.commit()
+    if MAIN_MOVIES:
+        MISS_DIRECTOR = set(DB.to_tuple(
+            f"select id from movie where id in {MAIN_MOVIES+(-1, )} and id not in (select movie from WORKER where category='director')"
+        ))
+        if MISS_DIRECTOR:
+            logger.debug(f"{len(MISS_DIRECTOR)} películas necesitan recuperar el director a mano")
+            for k, v in WIKI.get_director(*sorted(MISS_DIRECTOR)).items():
+                MISS_DIRECTOR.discard(k)
+                DB.executemany(
+                    "INSERT OR IGNORE INTO WORKER (movie, person, category) VALUES (?, ?)",
+                    (k, v, 'director')
+                )
+    DB.flush()
+    if MISS_DIRECTOR:
+        logger.warning(f"{len(MISS_DIRECTOR)} películas que no se ha podido recuperar el director")
+
+    for nconst, primaryName in iter_tuples(
+        'https://datasets.imdbws.com/name.basics.tsv.gz',
+        'nconst',
+        'primaryName',
+    ):
+        if primaryName is None:
+            continue
+        DB.executemany(
+            "INSERT INTO PERSON (id, name) values (?, ?)",
+            (nconst, primaryName)
+        )
+    DB.flush()
+
+    ids = DB.to_tuple("select distinct person from WORKER where person not in (select id from PERSON)")
+    for row in IMDB.get_names(*ids).items():
+        DB.executemany(
+            "INSERT INTO PERSON (id, name) values (?, ?)",
+            row
+        )
+    DB.flush()
+
+    DB.commit()
+    for t in ('TITLE', ):
+        DB.execute(
+            f"DELETE FROM {t} where movie not in (select id from MOVIE)",
+            log_level=logging.INFO
+        )
+    DB.execute(
+        "DELETE FROM WORKER where movie not in (select id from MOVIE) OR person not in (select id from PERSON)",
+        log_level=logging.INFO
+    )
+    DB.execute(
+        "DELETE FROM PERSON where id not in (select person from WORKER)",
+        log_level=logging.INFO
+    )
+    DB.commit()
+    DB.close()
+
+
+if __name__ == "__main__":
+    main()
