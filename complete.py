@@ -69,7 +69,7 @@ def union(*args):
 
 wiki = load_dict("wikipedia")
 film = load_dict("filmaffinity")
-cntr = {}  # load_dict("countries")
+cntr = load_dict("countries")
 
 ids = IMDB.scrape(*environ.get('SCRAPE_URLS', '').split())
 if len(ids):

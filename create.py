@@ -124,6 +124,8 @@ def main():
                 "INSERT OR IGNORE INTO WORKER (movie, person, category) VALUES (?, ?, ?)",
                 (tconst, d, 'director')
             )
+        if tconst not in MAIN_MOVIES:
+            continue
         for w in writers:
             DB.executemany(
                 "INSERT OR IGNORE INTO WORKER (movie, person, category) VALUES (?, ?, ?)",
@@ -137,8 +139,9 @@ def main():
         'category',
         'ordering',
     ):
-        if ordering > 10 or category not in ('director', 'writer', 'actor', 'actress'):
-            continue
+        if category != 'director':
+            if tconst not in MAIN_MOVIES or ordering > 10 or category not in ('writer', 'actor', 'actress'):
+                continue
         DB.executemany(
             "INSERT OR IGNORE INTO WORKER (movie, person, category) VALUES (?, ?, ?)",
             (tconst, nconst, category)
