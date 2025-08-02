@@ -2,7 +2,9 @@ from pycountry.db import Country as DBCountry
 from pycountry import countries as DBCountries
 
 
-def search_country(name):
+def search_country(name: str):
+    if name in (None, '', 'N/A'):
+        return None
     c: DBCountry = \
         DBCountries.get(name=name) or \
         DBCountries.get(alpha_3=name) or \
@@ -27,6 +29,8 @@ def search_country(name):
 
 
 def to_alpha_3(s: str):
+    if s in (None, '', 'N/A'):
+        return None
     if s == "West Germany":
         return to_alpha_3("Germany")
     c = search_country(name=s)
