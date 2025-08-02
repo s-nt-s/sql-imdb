@@ -117,7 +117,7 @@ class IMDBApi:
             if o is None:
                 continue
             ctr = tp_split(r",", o.get('Country'))
-            obj[i] = tuple(map(to_alpha_3, ctr))
+            obj[i] = tuple(c for c in map(to_alpha_3, ctr) if c is not None)
         for i, w in WIKI.get_countries(*obj.keys()).items():
             w = tuple(w.split())
             o = obj[i]
