@@ -154,12 +154,13 @@ def main():
         ))
         if MISS_DIRECTOR:
             logger.debug(f"{len(MISS_DIRECTOR)} películas necesitan recuperar el director a mano")
-            for k, v in WIKI.get_director(*sorted(MISS_DIRECTOR)).items():
+            for k, directors in WIKI.get_director(*sorted(MISS_DIRECTOR)).items():
                 MISS_DIRECTOR.discard(k)
-                DB.executemany(
-                    "INSERT OR IGNORE INTO WORKER (movie, person, category) VALUES (?, ?, ?)",
-                    (k, v, 'director')
-                )
+                for v in directors:
+                    DB.executemany(
+                        "INSERT OR IGNORE INTO WORKER (movie, person, category) VALUES (?, ?, ?)",
+                        (k, v, 'director')
+                    )
     DB.flush()
     if MISS_DIRECTOR:
         logger.warning(f"{len(MISS_DIRECTOR)} películas que no se ha podido recuperar el director")
