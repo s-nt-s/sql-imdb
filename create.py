@@ -157,7 +157,7 @@ def main():
             for k, v in WIKI.get_director(*sorted(MISS_DIRECTOR)).items():
                 MISS_DIRECTOR.discard(k)
                 DB.executemany(
-                    "INSERT OR IGNORE INTO WORKER (movie, person, category) VALUES (?, ?)",
+                    "INSERT OR IGNORE INTO WORKER (movie, person, category) VALUES (?, ?, ?)",
                     (k, v, 'director')
                 )
     DB.flush()
