@@ -2,6 +2,7 @@ from subprocess import check_output, CalledProcessError
 from functools import cached_property
 import re
 from core.util import get_env
+from os import getcwd
 
 
 class Git:

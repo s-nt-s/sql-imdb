@@ -4,7 +4,9 @@ from pycountry import countries as DBCountries
 
 def search_country(name):
     c: DBCountry = \
-        DBCountries.get(name=name)
+        DBCountries.get(name=name) or \
+        DBCountries.get(alpha_3=name) or \
+        DBCountries.get(alpha_2=name)
     if c is not None:
         return c
     lw_name = name.lower()
